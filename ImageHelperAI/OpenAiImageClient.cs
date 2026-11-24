@@ -20,31 +20,70 @@ internal enum ImageSide
     Bottom
 }
 
+internal sealed record SourceImage(byte[] Bytes, string Extension, string MediaType);
+
 internal sealed class OpenAiImageClient(HttpClient httpClient)
 {
     private const string Model = "gpt-image-2.6-sunburst";
     private const string EditsEndpoint = "https://api.openai.com/v1/images/edits";
 
     public async Task<GeneratedSideImage[]> GenerateSidesAsync(
-        string apiKey, byte[] source, string extension, string mediaType, IReadOnlyList<ImageSide> sides,
-        CancellationToken cancellationToken)
+        string apiKey, SourceImage source, IReadOnlyList<ImageSide> sides,
+        IProgress<(int Current, int Total)> recoveryProgress, CancellationToken cancellationToken)
     {
         var layout = new ViewSheet(sides);
+        var sheet = await RequestImageAsync(apiKey, source, layout, null, null, cancellationToken)
+            .ConfigureAwait(false);
+        if (layout.TryExtractViews(sheet, cancellationToken) is { } views)
+            return views;
+
+        if (sides.Count == 1)
+            throw new InvalidDataException("OpenAI returned an empty view.");
+
+        var recoveredViews = new GeneratedSideImage[sides.Count];
+        for (var i = 0; i < recoveredViews.Length; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            recoveryProgress.Report((i + 1, recoveredViews.Length));
+            var side = sides[i];
+            var singleView = new ViewSheet([side]);
+            var png = await RequestImageAsync(apiKey, source, singleView, sheet, layout.DescribeCell(i), cancellationToken)
+                .ConfigureAwait(false);
+            if (singleView.TryExtractViews(png, cancellationToken) is not [var recoveredView])
+                throw new InvalidDataException($"OpenAI returned an empty {side.ToString().ToLowerInvariant()} view.");
+
+            recoveredViews[i] = recoveredView;
+        }
+
+        return recoveredViews;
+    }
+
+    private async Task<byte[]> RequestImageAsync(
+        string apiKey, SourceImage source, ViewSheet layout, byte[]? referenceSheet, string? referenceCell,
+        CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Post, EditsEndpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         using var form = new MultipartFormDataContent();
         request.Content = form;
         form.Add(new StringContent(Model), "model");
-        form.Add(new StringContent(layout.BuildPrompt()), "prompt");
+        form.Add(new StringContent(layout.BuildPrompt(referenceCell)), "prompt");
         form.Add(new StringContent("png"), "output_format");
         form.Add(new StringContent("transparent"), "background");
         form.Add(new StringContent(layout.ImageSize), "size");
         form.Add(new StringContent("medium"), "quality");
 
-        var image = new ByteArrayContent(source);
-        image.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
-        form.Add(image, "image[]", $"source{extension}");
+        var image = new ByteArrayContent(source.Bytes);
+        image.Headers.ContentType = new MediaTypeHeaderValue(source.MediaType);
+        form.Add(image, "image[]", $"source{source.Extension}");
+
+        if (referenceSheet is not null)
+        {
+            var turnaround = new ByteArrayContent(referenceSheet);
+            turnaround.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+            form.Add(turnaround, "image[]", "turnaround.png");
+        }
 
         // The default completion option keeps HttpClient.Timeout in effect while the image downloads.
         using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -66,7 +105,7 @@ internal sealed class OpenAiImageClient(HttpClient httpClient)
             throw new InvalidDataException("OpenAI returned no usable image.");
         }
 
-        return layout.ExtractViews(bytes, cancellationToken);
+        return bytes;
     }
 
     private static async Task<string> ReadErrorAsync(

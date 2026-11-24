@@ -21,6 +21,20 @@
         </ResourceDictionary>
     </UserControl.Resources>
 
+    <UserControl.Styles>
+        <Style Selector="Button.image-preview">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="ToolTip.Tip" Value="Click to enlarge" />
+        </Style>
+    </UserControl.Styles>
+
     <Grid ColumnDefinitions="282,*" ColumnSpacing="20" Margin="0,16,0,0">
         <Border Grid.Column="0"
                 Background="{DynamicResource SidesPanelBrush}"
@@ -36,8 +50,10 @@
                                 <TextBlock x:Name="SourcePlaceholder" Text="PNG, JPEG or WebP"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"
                                            Foreground="{DynamicResource SidesMutedBrush}" />
-                                <Image x:Name="SourcePreview" Stretch="Uniform"
-                                       AutomationProperties.Name="Source image preview" />
+                                <Button x:Name="SourcePreviewButton" Classes="image-preview" IsVisible="False"
+                                        AutomationProperties.Name="Enlarge source image" Click="OpenSourcePreview">
+                                    <Image x:Name="SourcePreview" Stretch="Uniform" />
+                                </Button>
                             </Grid>
                         </Border>
                         <TextBlock x:Name="SourceName" IsVisible="False"
@@ -87,7 +103,7 @@
                 </Border>
                 <ScrollViewer x:Name="ResultsScroll" Grid.Row="1" IsVisible="False"
                               HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl x:Name="ResultsGrid">
+                    <ItemsControl x:Name="ResultsGrid" VerticalAlignment="Top">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <UniformGrid Columns="3" />
@@ -97,10 +113,12 @@
                             <DataTemplate x:DataType="local:GeneratedView">
                                 <Border Margin="0,0,8,8" BorderThickness="1" CornerRadius="8" ClipToBounds="True"
                                         BorderBrush="{DynamicResource SidesBorderBrush}">
-                                    <Grid RowDefinitions="170,Auto">
+                                    <Grid RowDefinitions="Auto,Auto">
                                         <Border Background="{DynamicResource SidesPreviewBrush}">
-                                            <Image Source="{Binding Preview}" Stretch="Uniform"
-                                                   AutomationProperties.Name="{Binding Name}" />
+                                            <Button Classes="image-preview" Click="OpenResultPreview"
+                                                    AutomationProperties.Name="{Binding Name, StringFormat='Enlarge {0} view'}">
+                                                <Image Source="{Binding Preview}" Stretch="UniformToFill" />
+                                            </Button>
                                         </Border>
                                         <TextBlock Grid.Row="1" Text="{Binding Name}"
                                                    Margin="10,8" FontWeight="SemiBold" />

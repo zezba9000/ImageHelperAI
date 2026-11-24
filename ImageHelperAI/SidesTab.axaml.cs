@@ -1,5 +1,10 @@
+using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using System;
@@ -91,6 +96,7 @@ public partial class SidesTab : UserControl, IDisposable
             SourcePreview.Source = preview;
             previousPreview?.Dispose();
             SourcePlaceholder.IsVisible = false;
+            SourcePreviewButton.IsVisible = true;
             SourceName.Text = file.Name;
             SourceName.IsVisible = true;
             ToolTip.SetTip(SourceName, file.Name);
@@ -111,6 +117,52 @@ public partial class SidesTab : UserControl, IDisposable
         {
             SetBusy(false);
         }
+    }
+
+    private async void OpenSourcePreview(object? sender, RoutedEventArgs e)
+    {
+        if (SourcePreview.Source is { } source)
+            await ShowImagePreviewAsync(source, SourceName.Text ?? "Source image");
+    }
+
+    private async void OpenResultPreview(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: GeneratedView view })
+            await ShowImagePreviewAsync(view.Preview, $"{view.Name} view");
+    }
+
+    private Task ShowImagePreviewAsync(IImage source, string title)
+    {
+        if (_busy || _disposed || TopLevel.GetTopLevel(this) is not Window owner)
+            return Task.CompletedTask;
+
+        var closePreview = new Button
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            IsCancel = true,
+            Content = new Image { Source = source, Stretch = Stretch.Uniform }
+        };
+        AutomationProperties.SetName(closePreview, $"Close {title} preview");
+        ToolTip.SetTip(closePreview, "Click to close");
+
+        var preview = new Window
+        {
+            Title = title,
+            Content = closePreview,
+            Width = Math.Min(owner.ClientSize.Width, 1100),
+            Height = Math.Min(owner.ClientSize.Height, 900),
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+        closePreview.Click += (_, _) => preview.Close();
+        return preview.ShowDialog(owner);
     }
 
     private async void Generate(object? sender, RoutedEventArgs e)
@@ -135,10 +187,15 @@ public partial class SidesTab : UserControl, IDisposable
         GenerationStatus.Text = sides.Length == 1
             ? $"Generating the {sides[0].ToString().ToLowerInvariant()} view…"
             : $"Generating {sides.Length} views together…";
+        var recoveryProgress = new Progress<(int Current, int Total)>(step =>
+        {
+            if (_busy && !_disposed)
+                GenerationStatus.Text = $"Recovering views individually ({step.Current} of {step.Total})…";
+        });
         try
         {
             var images = await _imageClient.GenerateSidesAsync(
-                apiKey, source.Bytes, source.Extension, source.MediaType, sides, cancellationToken);
+                apiKey, source, sides, recoveryProgress, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             SetResults(images);
             GenerationStatus.Text = images.Length == 1 ? "Generated 1 view." : $"Generated {images.Length} views.";
@@ -320,12 +377,14 @@ public partial class SidesTab : UserControl, IDisposable
     private void UpdateControls()
     {
         SourceButton.IsEnabled = !_busy;
+        SourcePreviewButton.IsEnabled = !_busy;
         SideOptions.IsEnabled = !_busy;
         GenerateButton.IsEnabled = !_busy && _source is not null &&
                                    _sideOptions.Any(item => item.Option.IsChecked == true);
         SaveButton.IsEnabled = !_busy && _results.Count > 0;
         ResultsPlaceholder.IsVisible = _results.Count == 0;
         ResultsScroll.IsVisible = _results.Count > 0;
+        ResultsGrid.IsEnabled = !_busy;
     }
 
     public void Dispose()
@@ -342,8 +401,6 @@ public partial class SidesTab : UserControl, IDisposable
         _source = null;
         ClearResults();
     }
-
-    private sealed record SourceImage(byte[] Bytes, string Extension, string MediaType);
 }
 
 internal sealed record GeneratedView(ImageSide Side, byte[] Png, Bitmap Preview)

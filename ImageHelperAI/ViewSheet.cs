@@ -38,19 +38,43 @@ internal sealed class ViewSheet
 
     public string ImageSize => FormattableString.Invariant($"{Width}x{Height}");
 
-    public string BuildPrompt()
+    public string DescribeCell(int index) =>
+        FormattableString.Invariant($"row {index / _columns + 1}, column {index % _columns + 1}");
+
+    public string BuildPrompt(string? referenceCell = null)
     {
         var cells = new StringBuilder();
         for (var i = 0; i < _columns * _rows; i++)
         {
             var contents = i < _sides.Length ? DescribeCamera(_sides[i]) : "Leave this cell fully transparent.";
-            cells.AppendLine(FormattableString.Invariant($"Row {i / _columns + 1}, column {i % _columns + 1}: {contents}"));
+            cells.AppendLine($"{DescribeCell(i)}: {contents}");
         }
+
+        var output = _sides.Length == 1
+            ? $"""
+              Render exactly one full subject on a {ImageSize} canvas. {DescribeCamera(_sides[0])}
+              Fit all held objects and appendages inside the frame, with clear padding on every edge.
+              """
+            : FormattableString.Invariant($"""
+              Render a {Width} by {Height} pixel sheet with {_columns} equal columns and {_rows} equal rows.
+              Use exactly one view per assigned {ViewSize} by {ViewSize} cell, in the following arrangement:
+              {cells}
+              Use the same orthographic scale across every cell, with the same height of the ground plane
+              and body landmarks across the level views. Fit the whole subject and its held objects and
+              appendages inside each assigned cell. Leave at least 64 pixels of clear padding on each edge
+              so there are continuous empty gutters between rows and between neighboring views.
+              """);
+        var references = referenceCell is null ? "" : $"""
+            Image 1 is the original reference for the subject, pose, and lighting. Image 2 is a turnaround
+            of that subject. Use it to match the inferred geometry, scale, and framing of {referenceCell}.
+            Render the requested camera angle as a single view with one subject on the entire canvas.
+            """;
 
         return FormattableString.Invariant($"""
             Create an orthographic turnaround of the main subject in the attached reference image for
             multi-view 3D reconstruction. Treat the subject as one frozen 3D scene. Keep the exact
             reference pose and change only the camera between views.
+            {references}
 
             Preserve the subject's proportions, colors, markings, clothing, and asymmetry. Lock all joint
             angles, limb and hand positions, the order and spacing of hands on any shared grip, and every
@@ -60,13 +84,7 @@ internal sealed class ViewSheet
             and body parts occlude one another as they would from each camera. Subject left and right
             are anatomical directions. Keep the camera upright for level views and preserve handedness.
 
-            Render a {Width} by {Height} pixel sheet with {_columns} equal columns and {_rows} equal rows.
-            Use exactly one view per assigned {ViewSize} by {ViewSize} cell, in the following arrangement:
-            {cells}
-            Use the same orthographic scale across every cell, with the same height of the ground plane
-            and body landmarks across the level views. Fit the whole subject and its held objects and
-            appendages inside each assigned cell. Leave at least 64 pixels of clear padding on each edge
-            so there are continuous empty gutters between rows and between neighboring views.
+            {output}
 
             Preserve the lighting on the subject from the reference, including light direction, color,
             intensity, contrast, rim light, highlights, and self-shadowing. Keep the lights fixed relative
@@ -77,7 +95,7 @@ internal sealed class ViewSheet
             """);
     }
 
-    public GeneratedSideImage[] ExtractViews(byte[] png, CancellationToken cancellationToken)
+    public GeneratedSideImage[]? TryExtractViews(byte[] png, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var data = SKData.CreateCopy(png);
@@ -87,7 +105,13 @@ internal sealed class ViewSheet
 
         using var sheet = SKBitmap.Decode(codec)
             ?? throw new InvalidDataException("OpenAI returned an image that could not be decoded.");
-        var crops = FindCrops(sheet.Pixels, cancellationToken);
+        var pixels = sheet.Pixels;
+        var crops = TryFindCrops(pixels, rowsFirst: true, cancellationToken);
+        if (crops is null && _rows > 1)
+            crops = TryFindCrops(pixels, rowsFirst: false, cancellationToken);
+        if (crops is null)
+            return null;
+
         var largestCrop = ViewSize;
         foreach (var crop in crops)
             largestCrop = Math.Max(largestCrop, Math.Max(crop.Width, crop.Height));
@@ -119,70 +143,82 @@ internal sealed class ViewSheet
         return images;
     }
 
-    private SKRectI[] FindCrops(SKColor[] pixels, CancellationToken cancellationToken)
+    private SKRectI[]? TryFindCrops(SKColor[] pixels, bool rowsFirst, CancellationToken cancellationToken)
     {
-        var width = Width;
-        var height = Height;
-        var rowEdges = new int[_rows + 1];
-        rowEdges[^1] = height;
-        if (_rows == 2)
-        {
-            var occupiedRows = new bool[height];
-            for (var y = 0; y < height; y++)
-            {
-                foreach (var pixel in pixels.AsSpan(y * width, width))
-                {
-                    if (IsBackground(pixel))
-                        continue;
-
-                    occupiedRows[y] = true;
-                    break;
-                }
-            }
-
-            rowEdges[1] = FindGutter(occupiedRows, ViewSize, "rows");
-        }
+        // Staggered views can have a clean gap within each column even when the full rows overlap.
+        var sheet = new SKRectI(0, 0, Width, Height);
+        var outerCount = rowsFirst ? _rows : _columns;
+        var innerCount = rowsFirst ? _columns : _rows;
+        var outerEdges = outerCount == 1
+            ? new[] { 0, rowsFirst ? Height : Width }
+            : TryFindEdges(Project(pixels, sheet, projectRows: rowsFirst), outerCount);
+        if (outerEdges is null)
+            return null;
 
         var crops = new SKRectI[_sides.Length];
-        for (var row = 0; row < _rows; row++)
+        for (var outer = 0; outer < outerCount; outer++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var top = rowEdges[row];
-            var bottom = rowEdges[row + 1];
-            var occupiedColumns = new bool[width];
-            for (var y = top; y < bottom; y++)
-            {
-                var line = pixels.AsSpan(y * width, width);
-                for (var x = 0; x < width; x++)
-                    occupiedColumns[x] |= !IsBackground(line[x]);
-            }
+            var start = outerEdges[outer];
+            var end = outerEdges[outer + 1];
+            var band = rowsFirst ? new SKRectI(0, start, Width, end) : new SKRectI(start, 0, end, Height);
+            var occupied = Project(pixels, band, projectRows: !rowsFirst);
+            var innerEdges = TryFindEdges(occupied, innerCount);
+            if (innerEdges is null)
+                return null;
 
-            var first = row * _columns;
-            var count = Math.Min(_columns, _sides.Length - first);
-            var left = 0;
-            for (var column = 0; column < count; column++)
+            for (var inner = 0; inner < innerCount; inner++)
             {
-                var right = column == _columns - 1
-                    ? width
-                    : FindGutter(occupiedColumns, (column + 1) * ViewSize, "views");
-                var index = first + column;
-                if (!occupiedColumns.AsSpan(left, right - left).Contains(true))
-                {
-                    var side = _sides[index].ToString().ToLowerInvariant();
-                    throw new InvalidDataException($"OpenAI returned an empty {side} view. Try generating again.");
-                }
+                var index = rowsFirst ? outer * _columns + inner : inner * _columns + outer;
+                if (index >= _sides.Length)
+                    continue;
 
-                crops[index] = new SKRectI(left, top, right, bottom);
-                left = right;
+                var left = innerEdges[inner];
+                var right = innerEdges[inner + 1];
+                if (!occupied.AsSpan(left, right - left).Contains(true))
+                    return null;
+
+                crops[index] = rowsFirst ? new SKRectI(left, start, right, end) : new SKRectI(start, left, end, right);
             }
         }
 
         return crops;
     }
 
-    private static int FindGutter(bool[] occupied, int expected, string between)
+    private bool[] Project(SKColor[] pixels, SKRectI area, bool projectRows)
     {
-        // Find two clear scan lines on either side of the cut, nearest the intended boundary.
+        var occupied = new bool[projectRows ? area.Height : area.Width];
+        var width = Width;
+        for (var y = 0; y < area.Height; y++)
+        {
+            var line = pixels.AsSpan((area.Top + y) * width + area.Left, area.Width);
+            for (var x = 0; x < line.Length; x++)
+            {
+                var coordinate = projectRows ? y : x;
+                occupied[coordinate] |= !IsBackground(line[x]);
+            }
+        }
+
+        return occupied;
+    }
+
+    private static int[]? TryFindEdges(bool[] occupied, int count)
+    {
+        var edges = new int[count + 1];
+        edges[^1] = occupied.Length;
+        for (var i = 1; i < count; i++)
+        {
+            edges[i] = FindGutter(occupied, i * ViewSize);
+            if (edges[i] < 0)
+                return null;
+        }
+
+        return edges;
+    }
+
+    private static int FindGutter(bool[] occupied, int expected)
+    {
+        // Find a cut with a clear scan line on each side, nearest the intended boundary.
         for (var distance = 0; distance <= GutterSearchRadius; distance++)
         {
             var before = expected - distance;
@@ -194,7 +230,7 @@ internal sealed class ViewSheet
                 return after;
         }
 
-        throw new InvalidDataException($"OpenAI returned a sheet without a clear gap between {between}. Try generating again.");
+        return -1;
     }
 
     private static bool IsBackground(SKColor pixel) => pixel.Alpha <= 8 || pixel == SKColors.White;
