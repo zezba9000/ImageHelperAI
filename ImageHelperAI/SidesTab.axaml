@@ -1,0 +1,116 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:ImageHelperAI"
+             x:Class="ImageHelperAI.SidesTab">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="SidesPanelBrush" Color="#FAFAFC" />
+                    <SolidColorBrush x:Key="SidesPreviewBrush" Color="#F0F1F5" />
+                    <SolidColorBrush x:Key="SidesBorderBrush" Color="#DFE1E8" />
+                    <SolidColorBrush x:Key="SidesMutedBrush" Color="#565C6A" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="SidesPanelBrush" Color="#24262D" />
+                    <SolidColorBrush x:Key="SidesPreviewBrush" Color="#191B21" />
+                    <SolidColorBrush x:Key="SidesBorderBrush" Color="#3C3F4A" />
+                    <SolidColorBrush x:Key="SidesMutedBrush" Color="#B4B8C6" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid ColumnDefinitions="282,*" ColumnSpacing="20" Margin="0,16,0,0">
+        <Border Grid.Column="0"
+                Background="{DynamicResource SidesPanelBrush}"
+                BorderBrush="{DynamicResource SidesBorderBrush}"
+                BorderThickness="1" CornerRadius="12">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="18" Margin="18">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Source image" FontSize="18" FontWeight="SemiBold" />
+                        <Border Height="166" CornerRadius="8" ClipToBounds="True"
+                                Background="{DynamicResource SidesPreviewBrush}">
+                            <Grid>
+                                <TextBlock x:Name="SourcePlaceholder" Text="PNG, JPEG or WebP"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SidesMutedBrush}" />
+                                <Image x:Name="SourcePreview" Stretch="Uniform"
+                                       AutomationProperties.Name="Source image preview" />
+                            </Grid>
+                        </Border>
+                        <TextBlock x:Name="SourceName" IsVisible="False"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource SidesMutedBrush}" />
+                        <Button x:Name="SourceButton" Content="Choose image…"
+                                HorizontalAlignment="Stretch" Click="ChooseSource" />
+                    </StackPanel>
+                    <Border Height="1" Background="{DynamicResource SidesBorderBrush}" />
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Sides to generate" FontSize="16" FontWeight="SemiBold" />
+                        <Grid x:Name="SideOptions" ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto"
+                              AutomationProperties.Name="Sides to generate">
+                            <CheckBox x:Name="FrontOption" Grid.Row="0" Grid.Column="0" Content="Front" />
+                            <CheckBox x:Name="BackOption" Grid.Row="0" Grid.Column="1" Content="Back" />
+                            <CheckBox x:Name="LeftOption" Grid.Row="1" Grid.Column="0" Content="Left" />
+                            <CheckBox x:Name="RightOption" Grid.Row="1" Grid.Column="1" Content="Right" />
+                            <CheckBox x:Name="TopOption" Grid.Row="2" Grid.Column="0" Content="Top" />
+                            <CheckBox x:Name="BottomOption" Grid.Row="2" Grid.Column="1" Content="Bottom" />
+                        </Grid>
+                        <Button x:Name="GenerateButton" Classes="accent" Content="Generate"
+                                HorizontalAlignment="Stretch" Click="Generate" IsEnabled="False" />
+                        <ProgressBar x:Name="GenerationProgress" IsIndeterminate="True" IsVisible="False" />
+                        <TextBlock x:Name="GenerationStatus" TextWrapping="Wrap"
+                                   AutomationProperties.LiveSetting="Polite"
+                                   Foreground="{DynamicResource SidesMutedBrush}" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Column="1" Padding="18" CornerRadius="12"
+                Background="{DynamicResource SidesPanelBrush}"
+                BorderBrush="{DynamicResource SidesBorderBrush}" BorderThickness="1">
+            <Grid RowDefinitions="Auto,*" RowSpacing="14">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <TextBlock Text="Generated views" FontSize="18" FontWeight="SemiBold"
+                               VerticalAlignment="Center" />
+                    <Button x:Name="SaveButton" Grid.Column="1" Content="Save…"
+                            Click="SaveResults" IsEnabled="False" />
+                </Grid>
+                <Border x:Name="ResultsPlaceholder" Grid.Row="1" CornerRadius="8"
+                        Background="{DynamicResource SidesPreviewBrush}">
+                    <TextBlock Text="Generated views will appear here."
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{DynamicResource SidesMutedBrush}" />
+                </Border>
+                <ScrollViewer x:Name="ResultsScroll" Grid.Row="1" IsVisible="False"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl x:Name="ResultsGrid">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Columns="3" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="local:GeneratedView">
+                                <Border Margin="0,0,8,8" BorderThickness="1" CornerRadius="8" ClipToBounds="True"
+                                        BorderBrush="{DynamicResource SidesBorderBrush}">
+                                    <Grid RowDefinitions="170,Auto">
+                                        <Border Background="{DynamicResource SidesPreviewBrush}">
+                                            <Image Source="{Binding Preview}" Stretch="Uniform"
+                                                   AutomationProperties.Name="{Binding Name}" />
+                                        </Border>
+                                        <TextBlock Grid.Row="1" Text="{Binding Name}"
+                                                   Margin="10,8" FontWeight="SemiBold" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
