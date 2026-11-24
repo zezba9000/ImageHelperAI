@@ -74,6 +74,8 @@
                             <CheckBox x:Name="TopOption" Grid.Row="2" Grid.Column="0" Content="Top" />
                             <CheckBox x:Name="BottomOption" Grid.Row="2" Grid.Column="1" Content="Bottom" />
                         </Grid>
+                        <CheckBox x:Name="CloserFramingOption" Content="Frame closer to subject"
+                                  ToolTip.Tip="Zoom in on the generated views. Parts near the edges may be cropped." />
                         <Button x:Name="GenerateButton" Classes="accent" Content="Generate"
                                 HorizontalAlignment="Stretch" Click="Generate" IsEnabled="False" />
                         <ProgressBar x:Name="GenerationProgress" IsIndeterminate="True" IsVisible="False" />

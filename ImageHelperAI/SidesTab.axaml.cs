@@ -182,6 +182,7 @@ public partial class SidesTab : UserControl, IDisposable
         }
 
         var cancellationToken = _lifetime.Token;
+        var frameCloser = CloserFramingOption.IsChecked == true;
         SetBusy(true);
         GenerationProgress.IsVisible = true;
         GenerationStatus.Text = sides.Length == 1
@@ -195,7 +196,7 @@ public partial class SidesTab : UserControl, IDisposable
         try
         {
             var images = await _imageClient.GenerateSidesAsync(
-                apiKey, source, sides, recoveryProgress, cancellationToken);
+                apiKey, source, sides, frameCloser, recoveryProgress, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             SetResults(images);
             GenerationStatus.Text = images.Length == 1 ? "Generated 1 view." : $"Generated {images.Length} views.";
@@ -379,6 +380,7 @@ public partial class SidesTab : UserControl, IDisposable
         SourceButton.IsEnabled = !_busy;
         SourcePreviewButton.IsEnabled = !_busy;
         SideOptions.IsEnabled = !_busy;
+        CloserFramingOption.IsEnabled = !_busy;
         GenerateButton.IsEnabled = !_busy && _source is not null &&
                                    _sideOptions.Any(item => item.Option.IsChecked == true);
         SaveButton.IsEnabled = !_busy && _results.Count > 0;

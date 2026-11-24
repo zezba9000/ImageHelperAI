@@ -13,11 +13,13 @@ internal sealed class ViewSheet
 {
     private const int ViewSize = 1024;
     private const int GutterSearchRadius = ViewSize / 4;
+    private const float CloseFramingZoom = 1.25f;
     private readonly ImageSide[] _sides;
+    private readonly bool _frameCloser;
     private readonly int _columns;
     private readonly int _rows;
 
-    public ViewSheet(IReadOnlyList<ImageSide> sides)
+    public ViewSheet(IReadOnlyList<ImageSide> sides, bool frameCloser)
     {
         (_columns, _rows) = sides.Count switch
         {
@@ -28,6 +30,7 @@ internal sealed class ViewSheet
             _ => throw new ArgumentOutOfRangeException(nameof(sides))
         };
 
+        _frameCloser = frameCloser;
         _sides = new ImageSide[sides.Count];
         for (var i = 0; i < _sides.Length; i++)
             _sides[i] = sides[i];
@@ -50,6 +53,7 @@ internal sealed class ViewSheet
             cells.AppendLine($"{DescribeCell(i)}: {contents}");
         }
 
+        var padding = _frameCloser ? 32 : 64;
         var output = _sides.Length == 1
             ? $"""
               Render exactly one full subject on a {ImageSize} canvas. {DescribeCamera(_sides[0])}
@@ -61,9 +65,14 @@ internal sealed class ViewSheet
               {cells}
               Use the same orthographic scale across every cell, with the same height of the ground plane
               and body landmarks across the level views. Fit the whole subject and its held objects and
-              appendages inside each assigned cell. Leave at least 64 pixels of clear padding on each edge
-              so there are continuous empty gutters between rows and between neighboring views.
+              appendages inside each assigned cell. Leave at least {padding} pixels of clear padding on
+              each edge so there are continuous empty gutters between rows and between neighboring views.
               """);
+        var framing = _frameCloser ? $"""
+            Make the subject's main body prominent, using the original reference's framing as a guide.
+            Minimize empty space in each working view while keeping the whole silhouette and at least
+            {padding} pixels of clear padding for a consistent close crop after rendering.
+            """ : "";
         var references = referenceCell is null ? "" : $"""
             Image 1 is the original reference for the subject, pose, and lighting. Image 2 is a turnaround
             of that subject. Use it to match the inferred geometry, scale, and framing of {referenceCell}.
@@ -85,6 +94,7 @@ internal sealed class ViewSheet
             are anatomical directions. Keep the camera upright for level views and preserve handedness.
 
             {output}
+            {framing}
 
             Preserve the lighting on the subject from the reference, including light direction, color,
             intensity, contrast, rim light, highlights, and self-shadowing. Keep the lights fixed relative
@@ -116,8 +126,9 @@ internal sealed class ViewSheet
         foreach (var crop in crops)
             largestCrop = Math.Max(largestCrop, Math.Max(crop.Width, crop.Height));
 
-        // Keep one scale across the set, even when the separator has moved in one row.
-        var scale = (float)ViewSize / largestCrop;
+        // Apply the same zoom around each view's center after separating the sheet.
+        var zoom = _frameCloser ? CloseFramingZoom : 1f;
+        var scale = ViewSize * zoom / largestCrop;
         using var sheetImage = SKImage.FromBitmap(sheet);
         var images = new GeneratedSideImage[_sides.Length];
         for (var i = 0; i < _sides.Length; i++)

@@ -28,10 +28,10 @@ internal sealed class OpenAiImageClient(HttpClient httpClient)
     private const string EditsEndpoint = "https://api.openai.com/v1/images/edits";
 
     public async Task<GeneratedSideImage[]> GenerateSidesAsync(
-        string apiKey, SourceImage source, IReadOnlyList<ImageSide> sides,
+        string apiKey, SourceImage source, IReadOnlyList<ImageSide> sides, bool frameCloser,
         IProgress<(int Current, int Total)> recoveryProgress, CancellationToken cancellationToken)
     {
-        var layout = new ViewSheet(sides);
+        var layout = new ViewSheet(sides, frameCloser);
         var sheet = await RequestImageAsync(apiKey, source, layout, null, null, cancellationToken)
             .ConfigureAwait(false);
         if (layout.TryExtractViews(sheet, cancellationToken) is { } views)
@@ -46,7 +46,7 @@ internal sealed class OpenAiImageClient(HttpClient httpClient)
             cancellationToken.ThrowIfCancellationRequested();
             recoveryProgress.Report((i + 1, recoveredViews.Length));
             var side = sides[i];
-            var singleView = new ViewSheet([side]);
+            var singleView = new ViewSheet([side], frameCloser);
             var png = await RequestImageAsync(apiKey, source, singleView, sheet, layout.DescribeCell(i), cancellationToken)
                 .ConfigureAwait(false);
             if (singleView.TryExtractViews(png, cancellationToken) is not [var recoveredView])
