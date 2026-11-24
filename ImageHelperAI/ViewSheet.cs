@@ -11,15 +11,15 @@ internal sealed record GeneratedSideImage(ImageSide Side, byte[] Png);
 
 internal sealed class ViewSheet
 {
-    private const int ViewSize = 1024;
-    private const int GutterSearchRadius = ViewSize / 4;
+    public const int DefaultViewSize = 1024;
     private const float CloseFramingZoom = 1.25f;
     private readonly ImageSide[] _sides;
     private readonly bool _frameCloser;
+    private readonly int _viewSize;
     private readonly int _columns;
     private readonly int _rows;
 
-    public ViewSheet(IReadOnlyList<ImageSide> sides, bool frameCloser)
+    public ViewSheet(IReadOnlyList<ImageSide> sides, bool frameCloser, int viewSize)
     {
         (_columns, _rows) = sides.Count switch
         {
@@ -31,13 +31,14 @@ internal sealed class ViewSheet
         };
 
         _frameCloser = frameCloser;
+        _viewSize = viewSize;
         _sides = new ImageSide[sides.Count];
         for (var i = 0; i < _sides.Length; i++)
             _sides[i] = sides[i];
     }
 
-    private int Width => _columns * ViewSize;
-    private int Height => _rows * ViewSize;
+    public int Width => _columns * _viewSize;
+    public int Height => _rows * _viewSize;
 
     public string ImageSize => FormattableString.Invariant($"{Width}x{Height}");
 
@@ -53,7 +54,7 @@ internal sealed class ViewSheet
             cells.AppendLine($"{DescribeCell(i)}: {contents}");
         }
 
-        var padding = _frameCloser ? 32 : 64;
+        var padding = (_frameCloser ? 32 : 64) * _viewSize / DefaultViewSize;
         var output = _sides.Length == 1
             ? $"""
               Render exactly one full subject on a {ImageSize} canvas. {DescribeCamera(_sides[0])}
@@ -61,7 +62,7 @@ internal sealed class ViewSheet
               """
             : FormattableString.Invariant($"""
               Render a {Width} by {Height} pixel sheet with {_columns} equal columns and {_rows} equal rows.
-              Use exactly one view per assigned {ViewSize} by {ViewSize} cell, in the following arrangement:
+              Use exactly one view per assigned {_viewSize} by {_viewSize} cell, in the following arrangement:
               {cells}
               Use the same orthographic scale across every cell, with the same height of the ground plane
               and body landmarks across the level views. Fit the whole subject and its held objects and
@@ -122,13 +123,13 @@ internal sealed class ViewSheet
         if (crops is null)
             return null;
 
-        var largestCrop = ViewSize;
+        var largestCrop = _viewSize;
         foreach (var crop in crops)
             largestCrop = Math.Max(largestCrop, Math.Max(crop.Width, crop.Height));
 
         // Apply the same zoom around each view's center after separating the sheet.
         var zoom = _frameCloser ? CloseFramingZoom : 1f;
-        var scale = ViewSize * zoom / largestCrop;
+        var scale = _viewSize * zoom / largestCrop;
         using var sheetImage = SKImage.FromBitmap(sheet);
         var images = new GeneratedSideImage[_sides.Length];
         for (var i = 0; i < _sides.Length; i++)
@@ -138,10 +139,10 @@ internal sealed class ViewSheet
             var side = _sides[i];
             var scaledWidth = crop.Width * scale;
             var scaledHeight = crop.Height * scale;
-            var x = (ViewSize - scaledWidth) / 2;
-            var y = (ViewSize - scaledHeight) / 2;
+            var x = (_viewSize - scaledWidth) / 2;
+            var y = (_viewSize - scaledHeight) / 2;
 
-            using var view = new SKBitmap(ViewSize, ViewSize, SKColorType.Bgra8888, SKAlphaType.Opaque);
+            using var view = new SKBitmap(_viewSize, _viewSize, SKColorType.Bgra8888, SKAlphaType.Opaque);
             using var canvas = new SKCanvas(view);
             canvas.Clear(SKColors.White);
             canvas.DrawImage(sheetImage, crop, SKRect.Create(x, y, scaledWidth, scaledHeight),
@@ -213,13 +214,13 @@ internal sealed class ViewSheet
         return occupied;
     }
 
-    private static int[]? TryFindEdges(bool[] occupied, int count)
+    private int[]? TryFindEdges(bool[] occupied, int count)
     {
         var edges = new int[count + 1];
         edges[^1] = occupied.Length;
         for (var i = 1; i < count; i++)
         {
-            edges[i] = FindGutter(occupied, i * ViewSize);
+            edges[i] = FindGutter(occupied, i * _viewSize);
             if (edges[i] < 0)
                 return null;
         }
@@ -227,10 +228,11 @@ internal sealed class ViewSheet
         return edges;
     }
 
-    private static int FindGutter(bool[] occupied, int expected)
+    private int FindGutter(bool[] occupied, int expected)
     {
         // Find a cut with a clear scan line on each side, nearest the intended boundary.
-        for (var distance = 0; distance <= GutterSearchRadius; distance++)
+        var searchRadius = _viewSize / 4;
+        for (var distance = 0; distance <= searchRadius; distance++)
         {
             var before = expected - distance;
             if (!occupied[before - 1] && !occupied[before])

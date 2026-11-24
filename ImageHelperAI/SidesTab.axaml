@@ -76,6 +76,18 @@
                         </Grid>
                         <CheckBox x:Name="CloserFramingOption" Content="Frame closer to subject"
                                   ToolTip.Tip="Zoom in on the generated views. Parts near the edges may be cropped." />
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Resolution per view" FontWeight="SemiBold" />
+                            <ComboBox x:Name="ResolutionPicker" HorizontalAlignment="Stretch"
+                                      AutomationProperties.Name="Resolution per view"
+                                      ToolTip.Tip="Higher resolutions may require a separate OpenAI request for each view.">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="x:Int32">
+                                        <TextBlock Text="{Binding ., StringFormat='{}{0} × {0}'}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
                         <Button x:Name="GenerateButton" Classes="accent" Content="Generate"
                                 HorizontalAlignment="Stretch" Click="Generate" IsEnabled="False" />
                         <ProgressBar x:Name="GenerationProgress" IsIndeterminate="True" IsVisible="False" />

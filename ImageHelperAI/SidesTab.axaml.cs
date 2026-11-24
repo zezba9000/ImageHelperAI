@@ -62,6 +62,8 @@ public partial class SidesTab : UserControl, IDisposable
         foreach (var (_, option) in _sideOptions)
             option.IsCheckedChanged += (_, _) => UpdateControls();
 
+        ResolutionPicker.ItemsSource = new[] { ViewSheet.DefaultViewSize, 1536, 2048 };
+        ResolutionPicker.SelectedIndex = 0;
         ResultsGrid.ItemsSource = _results;
         UpdateControls();
     }
@@ -183,23 +185,25 @@ public partial class SidesTab : UserControl, IDisposable
 
         var cancellationToken = _lifetime.Token;
         var frameCloser = CloserFramingOption.IsChecked == true;
+        var viewSize = ResolutionPicker.SelectedItem is int selectedSize ? selectedSize : ViewSheet.DefaultViewSize;
         SetBusy(true);
         GenerationProgress.IsVisible = true;
         GenerationStatus.Text = sides.Length == 1
             ? $"Generating the {sides[0].ToString().ToLowerInvariant()} view…"
             : $"Generating {sides.Length} views together…";
-        var recoveryProgress = new Progress<(int Current, int Total)>(step =>
+        var individualViewProgress = new Progress<(int Current, int Total)>(step =>
         {
             if (_busy && !_disposed)
-                GenerationStatus.Text = $"Recovering views individually ({step.Current} of {step.Total})…";
+                GenerationStatus.Text = $"Generating {viewSize} × {viewSize} views individually ({step.Current} of {step.Total})…";
         });
         try
         {
             var images = await _imageClient.GenerateSidesAsync(
-                apiKey, source, sides, frameCloser, recoveryProgress, cancellationToken);
+                apiKey, source, sides, frameCloser, viewSize, individualViewProgress, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             SetResults(images);
-            GenerationStatus.Text = images.Length == 1 ? "Generated 1 view." : $"Generated {images.Length} views.";
+            var count = images.Length == 1 ? "1 view" : $"{images.Length} views";
+            GenerationStatus.Text = $"Generated {count} at {viewSize} × {viewSize}.";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -381,6 +385,7 @@ public partial class SidesTab : UserControl, IDisposable
         SourcePreviewButton.IsEnabled = !_busy;
         SideOptions.IsEnabled = !_busy;
         CloserFramingOption.IsEnabled = !_busy;
+        ResolutionPicker.IsEnabled = !_busy;
         GenerateButton.IsEnabled = !_busy && _source is not null &&
                                    _sideOptions.Any(item => item.Option.IsChecked == true);
         SaveButton.IsEnabled = !_busy && _results.Count > 0;

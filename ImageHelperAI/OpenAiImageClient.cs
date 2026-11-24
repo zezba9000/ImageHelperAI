@@ -26,36 +26,43 @@ internal sealed class OpenAiImageClient(HttpClient httpClient)
 {
     private const string Model = "gpt-image-2.6-sunburst";
     private const string EditsEndpoint = "https://api.openai.com/v1/images/edits";
+    private const int MaximumCanvasEdge = 3840;
+    private const int MaximumCanvasPixels = 8_294_400;
 
     public async Task<GeneratedSideImage[]> GenerateSidesAsync(
-        string apiKey, SourceImage source, IReadOnlyList<ImageSide> sides, bool frameCloser,
-        IProgress<(int Current, int Total)> recoveryProgress, CancellationToken cancellationToken)
+        string apiKey, SourceImage source, IReadOnlyList<ImageSide> sides, bool frameCloser, int viewSize,
+        IProgress<(int Current, int Total)> individualViewProgress, CancellationToken cancellationToken)
     {
-        var layout = new ViewSheet(sides, frameCloser);
+        var layout = new ViewSheet(sides, frameCloser, viewSize);
+        var fitsInOneImage = layout.Width <= MaximumCanvasEdge && layout.Height <= MaximumCanvasEdge &&
+                             (long)layout.Width * layout.Height <= MaximumCanvasPixels;
+        if (!fitsInOneImage)
+            layout = new ViewSheet(sides, frameCloser, ViewSheet.DefaultViewSize);
+
         var sheet = await RequestImageAsync(apiKey, source, layout, null, null, cancellationToken)
             .ConfigureAwait(false);
-        if (layout.TryExtractViews(sheet, cancellationToken) is { } views)
+        if (fitsInOneImage && layout.TryExtractViews(sheet, cancellationToken) is { } views)
             return views;
 
         if (sides.Count == 1)
             throw new InvalidDataException("OpenAI returned an empty view.");
 
-        var recoveredViews = new GeneratedSideImage[sides.Count];
-        for (var i = 0; i < recoveredViews.Length; i++)
+        var individualViews = new GeneratedSideImage[sides.Count];
+        for (var i = 0; i < individualViews.Length; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            recoveryProgress.Report((i + 1, recoveredViews.Length));
+            individualViewProgress.Report((i + 1, individualViews.Length));
             var side = sides[i];
-            var singleView = new ViewSheet([side], frameCloser);
+            var singleView = new ViewSheet([side], frameCloser, viewSize);
             var png = await RequestImageAsync(apiKey, source, singleView, sheet, layout.DescribeCell(i), cancellationToken)
                 .ConfigureAwait(false);
             if (singleView.TryExtractViews(png, cancellationToken) is not [var recoveredView])
                 throw new InvalidDataException($"OpenAI returned an empty {side.ToString().ToLowerInvariant()} view.");
 
-            recoveredViews[i] = recoveredView;
+            individualViews[i] = recoveredView;
         }
 
-        return recoveredViews;
+        return individualViews;
     }
 
     private async Task<byte[]> RequestImageAsync(
