@@ -80,7 +80,7 @@
                             <TextBlock Text="Resolution per view" FontWeight="SemiBold" />
                             <ComboBox x:Name="ResolutionPicker" HorizontalAlignment="Stretch"
                                       AutomationProperties.Name="Resolution per view"
-                                      ToolTip.Tip="Higher resolutions may require a separate OpenAI request for each view.">
+                                      ToolTip.Tip="Above 1024 × 1024, each selected side is generated in a separate request.">
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate x:DataType="x:Int32">
                                         <TextBlock Text="{Binding ., StringFormat='{}{0} × {0}'}" />

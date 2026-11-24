@@ -188,9 +188,12 @@ public partial class SidesTab : UserControl, IDisposable
         var viewSize = ResolutionPicker.SelectedItem is int selectedSize ? selectedSize : ViewSheet.DefaultViewSize;
         SetBusy(true);
         GenerationProgress.IsVisible = true;
-        GenerationStatus.Text = sides.Length == 1
-            ? $"Generating the {sides[0].ToString().ToLowerInvariant()} view…"
-            : $"Generating {sides.Length} views together…";
+        GenerationStatus.Text = (sides.Length, viewSize) switch
+        {
+            (1, _) => $"Generating the {sides[0].ToString().ToLowerInvariant()} view…",
+            (_, > ViewSheet.DefaultViewSize) => $"Generating {sides.Length} views individually…",
+            _ => $"Generating {sides.Length} views together…"
+        };
         var individualViewProgress = new Progress<(int Current, int Total)>(step =>
         {
             if (_busy && !_disposed)

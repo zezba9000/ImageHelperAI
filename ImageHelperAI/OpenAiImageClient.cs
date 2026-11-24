@@ -26,47 +26,48 @@ internal sealed class OpenAiImageClient(HttpClient httpClient)
 {
     private const string Model = "gpt-image-2.6-sunburst";
     private const string EditsEndpoint = "https://api.openai.com/v1/images/edits";
-    private const int MaximumCanvasEdge = 3840;
-    private const int MaximumCanvasPixels = 8_294_400;
 
     public async Task<GeneratedSideImage[]> GenerateSidesAsync(
         string apiKey, SourceImage source, IReadOnlyList<ImageSide> sides, bool frameCloser, int viewSize,
         IProgress<(int Current, int Total)> individualViewProgress, CancellationToken cancellationToken)
     {
-        var layout = new ViewSheet(sides, frameCloser, viewSize);
-        var fitsInOneImage = layout.Width <= MaximumCanvasEdge && layout.Height <= MaximumCanvasEdge &&
-                             (long)layout.Width * layout.Height <= MaximumCanvasPixels;
-        if (!fitsInOneImage)
-            layout = new ViewSheet(sides, frameCloser, ViewSheet.DefaultViewSize);
+        if (sides.Count is < 1 or > 6)
+            throw new ArgumentOutOfRangeException(nameof(sides), "Select between one and six sides.");
 
-        var sheet = await RequestImageAsync(apiKey, source, layout, null, null, cancellationToken)
-            .ConfigureAwait(false);
-        if (fitsInOneImage && layout.TryExtractViews(sheet, cancellationToken) is { } views)
-            return views;
-
-        if (sides.Count == 1)
-            throw new InvalidDataException("OpenAI returned an empty view.");
+        ViewSheet? sheetLayout = null;
+        byte[]? poseReference = null;
+        if (viewSize <= ViewSheet.DefaultViewSize && sides.Count > 1)
+        {
+            sheetLayout = new ViewSheet(sides, frameCloser, viewSize);
+            poseReference = await RequestImageAsync(apiKey, source, sheetLayout, null, null, cancellationToken)
+                .ConfigureAwait(false);
+            if (sheetLayout.TryExtractViews(poseReference, cancellationToken) is { } views)
+                return views;
+        }
 
         var individualViews = new GeneratedSideImage[sides.Count];
         for (var i = 0; i < individualViews.Length; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            individualViewProgress.Report((i + 1, individualViews.Length));
+            if (individualViews.Length > 1)
+                individualViewProgress.Report((i + 1, individualViews.Length));
             var side = sides[i];
             var singleView = new ViewSheet([side], frameCloser, viewSize);
-            var png = await RequestImageAsync(apiKey, source, singleView, sheet, layout.DescribeCell(i), cancellationToken)
+            var png = await RequestImageAsync(apiKey, source, singleView, poseReference, sheetLayout?.DescribeCell(i), cancellationToken)
                 .ConfigureAwait(false);
-            if (singleView.TryExtractViews(png, cancellationToken) is not [var recoveredView])
+            if (singleView.TryExtractViews(png, cancellationToken) is not [var view])
                 throw new InvalidDataException($"OpenAI returned an empty {side.ToString().ToLowerInvariant()} view.");
 
-            individualViews[i] = recoveredView;
+            individualViews[i] = view;
+            // Share the first view as a pose reference when generating without a sheet.
+            poseReference ??= png;
         }
 
         return individualViews;
     }
 
     private async Task<byte[]> RequestImageAsync(
-        string apiKey, SourceImage source, ViewSheet layout, byte[]? referenceSheet, string? referenceCell,
+        string apiKey, SourceImage source, ViewSheet layout, byte[]? poseReference, string? referenceCell,
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, EditsEndpoint);
@@ -75,7 +76,7 @@ internal sealed class OpenAiImageClient(HttpClient httpClient)
         using var form = new MultipartFormDataContent();
         request.Content = form;
         form.Add(new StringContent(Model), "model");
-        form.Add(new StringContent(layout.BuildPrompt(referenceCell)), "prompt");
+        form.Add(new StringContent(layout.BuildPrompt(poseReference is not null, referenceCell)), "prompt");
         form.Add(new StringContent("png"), "output_format");
         form.Add(new StringContent("transparent"), "background");
         form.Add(new StringContent(layout.ImageSize), "size");
@@ -85,11 +86,11 @@ internal sealed class OpenAiImageClient(HttpClient httpClient)
         image.Headers.ContentType = new MediaTypeHeaderValue(source.MediaType);
         form.Add(image, "image[]", $"source{source.Extension}");
 
-        if (referenceSheet is not null)
+        if (poseReference is not null)
         {
-            var turnaround = new ByteArrayContent(referenceSheet);
-            turnaround.Headers.ContentType = new MediaTypeHeaderValue("image/png");
-            form.Add(turnaround, "image[]", "turnaround.png");
+            var reference = new ByteArrayContent(poseReference);
+            reference.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+            form.Add(reference, "image[]", "pose-reference.png");
         }
 
         // The default completion option keeps HttpClient.Timeout in effect while the image downloads.

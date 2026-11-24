@@ -37,15 +37,15 @@ internal sealed class ViewSheet
             _sides[i] = sides[i];
     }
 
-    public int Width => _columns * _viewSize;
-    public int Height => _rows * _viewSize;
+    private int Width => _columns * _viewSize;
+    private int Height => _rows * _viewSize;
 
     public string ImageSize => FormattableString.Invariant($"{Width}x{Height}");
 
     public string DescribeCell(int index) =>
         FormattableString.Invariant($"row {index / _columns + 1}, column {index % _columns + 1}");
 
-    public string BuildPrompt(string? referenceCell = null)
+    public string BuildPrompt(bool hasPoseReference, string? referenceCell)
     {
         var cells = new StringBuilder();
         for (var i = 0; i < _columns * _rows; i++)
@@ -74,11 +74,20 @@ internal sealed class ViewSheet
             Minimize empty space in each working view while keeping the whole silhouette and at least
             {padding} pixels of clear padding for a consistent close crop after rendering.
             """ : "";
-        var references = referenceCell is null ? "" : $"""
-            Image 1 is the original reference for the subject, pose, and lighting. Image 2 is a turnaround
-            of that subject. Use it to match the inferred geometry, scale, and framing of {referenceCell}.
-            Render the requested camera angle as a single view with one subject on the entire canvas.
-            """;
+        var references = (hasPoseReference, referenceCell) switch
+        {
+            (false, _) => "",
+            (true, null) => """
+                Image 1 is the original reference for the subject, pose, and lighting. Image 2 is an
+                already generated view of the same subject. Use it to keep the pose, prop placement,
+                and orthographic scale consistent as the camera moves to the requested angle.
+                """,
+            (true, { } cell) => $"""
+                Image 1 is the original reference for the subject, pose, and lighting. Image 2 is a turnaround
+                of that subject. Use it to match the inferred geometry, scale, and framing of {cell}.
+                Render the requested camera angle as a single view with one subject on the entire canvas.
+                """
+        };
 
         return FormattableString.Invariant($"""
             Create an orthographic turnaround of the main subject in the attached reference image for
